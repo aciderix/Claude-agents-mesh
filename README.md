@@ -1,349 +1,206 @@
-Le MCP actuel est un coordinateur entre plusieurs sessions Claude Code, relié à Supabase. Il permet à deux agents Claude, potentiellement liés à deux comptes Claude différents, de partager un workspace et de collaborer.
+# Claude Agents Mesh
 
-Fonctionnalités disponibles actuellement
+Un **MCP de coordination** qui permet à plusieurs sessions Claude Code — y compris
+sur des **comptes Claude différents** — de collaborer via un projet **Supabase**
+partagé : présence des agents, messages persistants, file de tâches avec *lease*, et
+signalement des limites (quotas).
 
-1. Gestion des workspaces
+Supabase garde l'état (rien n'est perdu si une session s'arrête). Le MCP est la seule
+interface que Claude voit. Le dépôt est **public et paramétrable** : chacun déploie sur
+**son propre projet Supabase** et se connecte avec **une URL + un token**.
 
-Le MCP peut :
+```
+Session A (compte A)   Session B (compte B)   Session C (compte A)
+        \                    |                    /
+         \  MCP HTTP  (Authorization: Bearer mesh_…)
+          ▼                  ▼                  ▼
+     Supabase Edge Function "coordinator"  (service_role)
+                         │
+                         ▼
+     PostgreSQL : workspaces · agents · tasks · messages · quota_events · events
+```
 
-créer un workspace partagé ;
+Voir [`docs/architecture.md`](docs/architecture.md) pour le détail.
 
-ajouter un utilisateur comme membre ;
+---
 
-lister les membres d’un workspace.
+## 1. Déployer ton propre mesh (une fois)
 
+Prérequis : un compte Supabase et le [CLI Supabase](https://supabase.com/docs/guides/local-development)
+(`supabase`). Tu peux aussi tout faire depuis le tableau de bord Supabase.
 
-Fonctions :
+```bash
+# a. Récupérer le dépôt
+git clone https://github.com/aciderix/claude-agents-mesh
+cd claude-agents-mesh
 
-create_workspace()  
-add_workspace_member()  
-list_workspace_members()
+# b. Lier ton projet Supabase (remplace <ref> par la ref de ton projet)
+supabase link --project-ref <ref>
 
-Actuellement, l’ajout d’un membre demande encore son UUID Supabase.
+# c. Appliquer le schéma (crée les tables, RLS, fonctions, token-auth)
+supabase db push
 
-2. Enregistrement des sessions Claude
+# d. Définir le secret bootstrap (ton mot de passe maître d'admin)
+supabase secrets set --project-ref <ref> MESH_BOOTSTRAP_SECRET="$(openssl rand -hex 32)"
 
-Chaque session Claude Code peut s’enregistrer comme un agent.
+# e. Déployer la fonction MCP (auth custom → verify_jwt off, déjà dans config.toml)
+supabase functions deploy coordinator --no-verify-jwt
+```
 
-Fonctions :
+Ton endpoint MCP est alors :
 
-register_session()  
-list_agents()  
-get_agent_status()  
-heartbeat_session()
+```
+https://<ref>.supabase.co/functions/v1/coordinator/mcp
+```
 
-Cela permet de :
+> `SUPABASE_URL` et `SUPABASE_SERVICE_ROLE_KEY` sont fournis automatiquement à la
+> fonction par Supabase. **Ne mets jamais** la clé `service_role` dans le dépôt ni dans
+> un client Claude — elle ne vit que côté serveur.
 
-créer automatiquement un agent ;
+Vérification rapide :
 
-associer l’agent à un workspace ;
+```bash
+curl https://<ref>.supabase.co/functions/v1/coordinator/health
+# => {"ok":true,"server":"claude-agents-mesh",...,"tools":23,...}
+```
 
-enregistrer son nom de session ;
+---
 
-déclarer ses capacités ;
+## 2. Créer un workspace et des tokens
 
-suivre son statut ;
+Le **token bootstrap** (`MESH_BOOTSTRAP_SECRET`) sert uniquement à l'administration.
+Utilise-le une fois pour créer le workspace, puis passe au token *owner* renvoyé.
 
-actualiser sa présence ;
+Avec `curl` (ou en ajoutant temporairement le MCP avec le token bootstrap et en
+demandant à Claude d'appeler `create_workspace`) :
 
-détecter les agents disponibles ou hors ligne.
+```bash
+BOOT="<ton MESH_BOOTSTRAP_SECRET>"
+URL="https://<ref>.supabase.co/functions/v1/coordinator/mcp"
 
+# Créer le workspace + le propriétaire → renvoie owner_token (mesh_…)
+curl -s -X POST "$URL" -H "authorization: Bearer $BOOT" -H "content-type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_workspace","arguments":{"name":"mon-projet","owner_label":"moi@example.com"}}}'
+```
 
-Les statuts prévus sont :
+Puis, avec le **token owner** obtenu, invite les autres participants (l'`email`/`label`
+n'est qu'une **étiquette**, aucun mail n'est envoyé) :
 
-available  
-working  
-blocked_by_quota  
-waiting_for_reset  
-needs_attention  
-offline
+```bash
+OWNER="mesh_…"   # owner_token renvoyé ci-dessus
+curl -s -X POST "$URL" -H "authorization: Bearer $OWNER" -H "content-type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"invite_member","arguments":{"label":"bob@example.com"}}}'
+# => renvoie un token mesh_… à transmettre à Bob (avec l'URL du MCP)
+```
 
-L’UUID de l’agent est généré automatiquement par la base.
+**1 token = 1 identité = 1 agent.** Pour plusieurs agents indépendants, crée plusieurs
+tokens.
 
-3. Communication entre agents
+---
 
-Les agents peuvent s’envoyer des messages persistants.
+## 3. Connecter une session Claude Code
 
-Fonctions :
+Tu n'utilises que des agents cloud : deux façons de brancher le MCP.
 
-send_message()  
-read_messages()  
-ack_message()
+### Option A — Plugin (recommandé, « paramétrable »)
 
-Le système permet :
+Le plugin embarque le serveur MCP, les hooks (enregistrement auto au démarrage,
+présence, quotas) et le skill de coordination. À l'activation, Claude Code te demande
+**ton URL** et **ton token** (donc chacun sa propre base).
 
-d’envoyer un message à un agent précis ;
+Dans `claude.ai/code` → réglages → Plugins, ajoute ce dépôt comme marketplace/plugin,
+active `claude-agents-mesh`, puis renseigne :
 
-d’associer le message à une tâche ;
+- **Mesh MCP URL** : `https://<ref>.supabase.co/functions/v1/coordinator/mcp`
+- **Mesh access token** : ton `mesh_…`
 
-de définir un type de message ;
+En CLI, l'équivalent d'un serveur seul :
 
-de stocker un contenu JSON ;
+```bash
+claude mcp add --transport http mesh https://<ref>.supabase.co/functions/v1/coordinator/mcp \
+  --header "Authorization: Bearer mesh_…"
+```
 
-de suivre son statut ;
+### Option B — MCP distant manuel
 
-d’accuser réception du message.
+Dans les réglages MCP de `claude.ai/code`, ajoute un serveur **HTTP** :
 
+- URL : `https://<ref>.supabase.co/functions/v1/coordinator/mcp`
+- Header : `Authorization: Bearer mesh_…`
 
-Les statuts de message sont :
+Dès la connexion, l'agent est **identifié automatiquement** par son token. Demande à
+Claude : *« appelle whoami »* puis *« register_session avec le nom Claude-A »*.
 
-pending  
-delivered  
-acknowledged  
-failed
+---
 
-Les messages sont stockés dans Supabase et ne sont donc pas perdus si une session Claude est interrompue.
+## 4. Utiliser le mesh
 
-4. Gestion de tâches partagées
+Une fois connecté, Claude dispose de 23 outils. Enchaînement typique d'un *handoff* :
 
-Le MCP contient une file de tâches collaborative.
+1. `whoami` — confirmer l'identité et le workspace.
+2. `register_session` — s'enregistrer (le hook du plugin le fait déjà).
+3. `get_coordination_status` — voir qui est présent, les tâches, les messages.
+4. A : `create_task` → B : `claim_task` → `heartbeat_task` (boucle) → `complete_task`.
+5. `send_message` / `read_messages` / `ack_message` — se parler (persistant).
+6. `report_quota_event` — signaler un blocage/reprise de quota.
 
-Fonctions :
+Le skill `coordination` (fourni par le plugin) explique tout cela à Claude
+automatiquement.
 
-create_task()  
-list_tasks()  
-update_task()  
-claim_task()  
-heartbeat_task()  
-release_task()  
-complete_task()
+### Outils disponibles
 
-Les agents peuvent :
+| Domaine | Outils |
+| --- | --- |
+| Identité / admin | `whoami`, `create_workspace`, `invite_member`, `list_workspace_members`, `list_tokens`, `revoke_token` |
+| Présence | `register_session`, `heartbeat_session`, `list_agents`, `get_agent_status` |
+| Tâches | `create_task`, `list_tasks`, `claim_task`, `heartbeat_task`, `release_task`, `complete_task`, `update_task` |
+| Messages | `send_message`, `read_messages`, `ack_message` |
+| Quotas / vue | `report_quota_event`, `get_quota_status`, `get_coordination_status` |
 
-créer une tâche ;
+---
 
-lui donner un titre et une description ;
+## 5. Statusline quota (optionnel)
 
-définir une priorité ;
+Un plugin ne peut pas imposer la statusline principale : ajoute-la toi-même dans ton
+`settings.json` de Claude Code :
 
-consulter les tâches ;
+```json
+{ "statusLine": { "type": "command", "command": "/chemin/vers/claude-agents-mesh/statusline/statusline.sh" } }
+```
 
-réserver une tâche ;
+Elle affiche `mesh | 5h 95% reset 19:00Z | 7d 82% reset 16:00Z`. Si `MESH_MCP_URL`
+et `MESH_MCP_TOKEN` sont exportés, elle émet aussi un `quota_warning` (une fois par
+fenêtre de 5 h au-delà de `MESH_WARN_AT`, défaut 90 %).
 
-obtenir un lease temporaire ;
+---
 
-prolonger ce lease ;
+## Sécurité
 
-libérer une tâche ;
+- La clé `service_role` ne vit que dans l'environnement de la fonction, jamais dans le
+  dépôt ni dans un client.
+- `member_tokens` : RLS activé **sans aucune policy** → seul le `service_role` y accède.
+  Seul le **hash SHA-256** est stocké ; le token brut n'est montré qu'à la création.
+- Les RPC `mesh_*` sont exécutables **uniquement** par `service_role`.
+- L'identité vient toujours du token, jamais des arguments envoyés par Claude.
+- RLS reste activé partout en défense en profondeur.
 
-terminer une tâche ;
+Révoquer un accès : `revoke_token(token_id)` (voir `list_tokens`).
 
-enregistrer un résultat JSON.
+---
 
+## Structure du dépôt
 
-Les statuts de tâche sont :
+```
+.claude-plugin/plugin.json     Manifeste du plugin (MCP + hooks + userConfig)
+hooks/                         session-start, session-end, stop, quota-notification
+skills/coordination/SKILL.md   Guide de coordination pour Claude
+statusline/statusline.sh       Statusline quota (optionnelle)
+supabase/
+  config.toml
+  migrations/                  base_schema + token_auth
+  functions/coordinator/       Serveur MCP (Deno/TypeScript)
+docs/architecture.md
+```
 
-pending  
-claimed  
-in_progress  
-completed  
-failed  
-cancelled
-
-Le mécanisme de lease doit permettre à un autre agent de reprendre une tâche lorsqu’un agent disparaît ou ne renouvelle plus son lease.
-
-5. Suivi des quotas Claude
-
-Le système prévoit l’enregistrement des événements de quota Claude Code.
-
-Fonctions :
-
-report_quota_event()  
-get_quota_state()
-
-Les événements pris en charge sont :
-
-quota_warning  
-quota_blocked  
-quota_reset  
-quota_auto_resumed  
-quota_resume_disabled
-
-Le système peut mémoriser :
-
-la fenêtre concernée ;
-
-le pourcentage utilisé ;
-
-la date de réinitialisation ;
-
-le type d’erreur ;
-
-les détails de l’événement.
-
-
-Les fenêtres de quota prévues sont :
-
-five_hour  
-seven_day  
-spend_limit
-
-Lorsqu’un agent atteint une limite, son statut peut passer automatiquement à :
-
-blocked_by_quota
-
-Puis revenir à :
-
-available
-
-après une réinitialisation ou une reprise automatique.
-
-6. Vue globale de coordination
-
-Le MCP expose également une vue synthétique d’un workspace :
-
-get_coordination_status()
-
-Cette fonction regroupe :
-
-les agents présents ;
-
-leurs statuts ;
-
-les tâches actives ;
-
-les leases ;
-
-les événements de quota ;
-
-les derniers messages.
-
-
-Elle est destinée à permettre à un agent de comprendre rapidement l’état général de la collaboration.
-
-Fonctionnalités du plugin autour du MCP
-
-Le plugin Claude Code ajoute plusieurs mécanismes automatiques.
-
-Hooks de session
-
-Les hooks sont prévus pour écouter :
-
-SessionStart  
-StopFailure  
-Notification  
-SessionEnd
-
-Ils peuvent :
-
-enregistrer automatiquement une session ;
-
-signaler un blocage de quota ;
-
-signaler une reprise après quota ;
-
-signaler la fin d’une session ;
-
-mettre à jour le statut de l’agent.
-
-
-StatusLine
-
-Le plugin peut afficher une ligne comme :
-
-quota 5h 95% reset 19:00Z | 7d 82% reset 16:00Z
-
-À partir d’un certain seuil, il peut envoyer automatiquement un événement quota_warning.
-
-Notifications Realtime
-
-Le plugin contient un canal Realtime qui doit notifier la session lorsqu’il y a :
-
-un nouveau message ;
-
-une modification de statut d’un agent ;
-
-un événement de quota ;
-
-une modification de tâche.
-
-
-Cette fonctionnalité dépend toutefois du démarrage correct du channel dans Claude Code Cloud et doit être considérée comme optionnelle pour le moment.
-
-Sécurité actuelle
-
-Le système utilise :
-
-Supabase Auth  
-JWT Bearer  
-PostgreSQL RLS
-
-Le serveur ne devrait pas faire confiance à un user_id fourni librement par Claude. Il déduit l’utilisateur depuis le JWT.
-
-Les opérations sensibles vérifient notamment :
-
-que l’agent appartient bien à l’utilisateur authentifié ;
-
-que l’agent appartient au workspace concerné ;
-
-que l’utilisateur est membre du workspace ;
-
-que l’agent possède la tâche avant de la terminer ou de renouveler son lease.
-
-
-La clé service_role ne doit pas être utilisée dans le plugin.
-
-Ce qui fonctionne déjà
-
-Le backend possède actuellement :
-
-les tables Supabase ;
-
-les migrations principales ;
-
-l’Edge Function MCP ;
-
-les opérations de messages ;
-
-les opérations de tâches ;
-
-le suivi des agents ;
-
-le suivi des quotas ;
-
-le Realtime ;
-
-les hooks ;
-
-le status line ;
-
-le canal de notifications ;
-
-le contrôle JWT/RLS.
-
-
-Ce qui n’est pas encore suffisamment simple ou finalisé
-
-Le MCP ne fournit pas encore automatiquement :
-
-la création des utilisateurs Supabase ;
-
-l’invitation par simple adresse e-mail ;
-
-la découverte automatique du workspace ;
-
-la récupération automatique du contexte après une nouvelle session Cloud ;
-
-le renouvellement robuste des tokens ;
-
-l’enregistrement fiable après disparition du conteneur cloud ;
-
-la configuration automatique du MCP HTTP distant dans Claude Web.
-
-
-Aujourd’hui, il faut encore fournir ou gérer manuellement :
-
-JWT Supabase  
-clé publique Supabase  
-workspace UUID  
-identité du second utilisateur
-
-L’objectif de la prochaine version est de réduire tout cela à :
-
-Connexion de l’utilisateur  
-        +  
-Invitation par e-mail  
-        +  
-Création automatique de la session et de l’agent
-
-Le MCP est donc déjà fonctionnel comme infrastructure de coordination, mais son onboarding et son intégration Claude Code Cloud doivent encore être simplifiés.
+État : v1 fonctionnelle (messages, tâches, leases, heartbeats, quotas). Realtime push
+prévu pour une version ultérieure (les tables sont déjà publiées pour Realtime).

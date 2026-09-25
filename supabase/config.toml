@@ -1,0 +1,8 @@
+# Supabase config for the Claude Agents Mesh coordinator.
+# Used by the Supabase CLI (`supabase db push`, `supabase functions deploy`).
+project_id = "claude-agents-mesh"
+
+[functions.coordinator]
+# The coordinator implements its own bearer-token authentication, so the platform
+# JWT gate must be OFF or our mesh_ tokens would be rejected before reaching the code.
+verify_jwt = false
