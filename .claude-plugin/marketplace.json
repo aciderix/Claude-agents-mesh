@@ -1,0 +1,11 @@
+{
+  "name": "aciderix-mesh",
+  "owner": { "name": "aciderix" },
+  "plugins": [
+    {
+      "name": "claude-agents-mesh",
+      "source": "./",
+      "description": "Coordinate multiple Claude Code sessions (even across different Claude accounts) through a shared Supabase project: presence, messages, a leased task queue, and quota awareness."
+    }
+  ]
+}

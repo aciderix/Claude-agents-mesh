@@ -1,0 +1,47 @@
+{
+  "name": "claude-agents-mesh",
+  "version": "0.1.0",
+  "description": "Coordinate multiple Claude Code sessions (even across different Claude accounts) through a shared Supabase project: presence, messages, a leased task queue, and quota awareness.",
+  "author": { "name": "aciderix" },
+  "homepage": "https://github.com/aciderix/claude-agents-mesh",
+  "repository": "https://github.com/aciderix/claude-agents-mesh",
+  "keywords": ["mcp", "supabase", "multi-agent", "coordination", "quota"],
+  "userConfig": {
+    "mesh_url": {
+      "type": "string",
+      "title": "Mesh MCP URL",
+      "description": "Your Supabase coordinator endpoint, e.g. https://<project-ref>.supabase.co/functions/v1/coordinator/mcp",
+      "required": true
+    },
+    "mesh_token": {
+      "type": "string",
+      "title": "Mesh access token",
+      "description": "Your member token (mesh_...) issued by the workspace owner. Keep it secret.",
+      "required": true,
+      "sensitive": true
+    }
+  },
+  "mcpServers": {
+    "mesh": {
+      "type": "http",
+      "url": "${user_config.mesh_url}",
+      "headers": {
+        "Authorization": "Bearer ${user_config.mesh_token}"
+      }
+    }
+  },
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/session-start.sh" } ] }
+    ],
+    "SessionEnd": [
+      { "hooks": [ { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/session-end.sh" } ] }
+    ],
+    "Notification": [
+      { "hooks": [ { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/quota-notification.sh" } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/stop.sh" } ] }
+    ]
+  }
+}
