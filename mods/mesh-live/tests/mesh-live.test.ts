@@ -61,6 +61,9 @@ type World = { status: Required<RawStatus>; messages: RawMessage[] }
 
 /** A fake coordinator beneath the plugin: answers `$.mcp.call` from `world` and records each call. */
 function fakeMesh(on: On, calls: Call[], server = 'mesh', world: World = { status: STATUS, messages: MESSAGES }) {
+  on('tool.list', () => ({
+    value: ['get_coordination_status', 'read_messages'].map(tool => ({ name: `mcp__${server}__${tool}`, description: '', mcp: true })),
+  }))
   on('mcp.call', ($, e) => {
     if (e.server !== server) throw new Error(`no MCP server ${e.server}`)
     calls.push({ tool: e.tool, args: e.args })
@@ -179,7 +182,7 @@ describe('in a session', () => {
   test('finds the server under another name', async ($, on) => {
     const calls: Call[] = []
     engineBasics(on, [])
-    fakeMesh(on, calls, 'Claude mesh')
+    fakeMesh(on, calls, 'Claude_mesh')
 
     await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
     await flush()
@@ -384,5 +387,23 @@ describe('in a session', () => {
     })
     expect(JSON.stringify(await ui.drawn())).not.toContain(TOKEN)
     await ui.unmount()
+  })
+
+  test('a refused call stops the polling instead of asking again', async ($, on) => {
+    const calls: Call[] = []
+    const statuses: (string | undefined)[] = []
+    engineBasics(on, statuses)
+    on('tool.list', () => ({ value: [{ name: 'mcp__mesh__get_coordination_status', description: '', mcp: true }] }))
+    on('mcp.call', ($, e) => {
+      calls.push({ tool: e.tool, args: e.args })
+      return { deny: 'refusé par la personne' }
+    })
+    await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+    for (let i = 0; i < 3; i++) await $.command.run(cmd('inbox'))
+    await flush()
+
+    // One ask per call: no other server name tried, no register_session after a refused heartbeat.
+    expect(calls.filter(c => c.tool === 'register_session')).toHaveLength(1)
+    expect(statuses.at(-1)).toContain('en pause')
   })
 })

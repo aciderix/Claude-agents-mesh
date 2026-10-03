@@ -79,6 +79,10 @@ let leaseSeconds = 120
 let server: string | null = null
 let inflight: Promise<MeshSnapshot> | null = null
 let isWakeQueued = false
+let pollTimer: { cancel: () => void } | null = null
+// Polls failed in a row; past MAX_FAILURES the timer stops (a refused permission must not re-ask forever).
+let failures = 0
+const MAX_FAILURES = 2
 let handoffRunning: Promise<string> | null = null
 let quotaChain: Promise<void> = Promise.resolve()
 // A rate_limit stop with no window measured (no reading yet) hands off once.
@@ -86,20 +90,37 @@ let hasHandedOffUnmeasured = false
 
 // ---------------------------------------------------------------- mesh calls
 
-/** Calls a coordinator tool through the engine's own MCP connection; the server name is found once, then kept. */
-async function call<T = unknown>($: EngineInterface, tool: string, args: Record<string, unknown> = {}): Promise<T> {
-  if (server !== null) return parseResult(await $.mcp.call(server, tool, args)) as T
-  for (const name of candidates) {
-    let result: McpToolResult
-    try {
-      result = await $.mcp.call(name, tool, args)
-    } catch {
-      continue
-    }
-    server = name
-    return parseResult(result) as T
+/** A refused call may come back as `{ deny }` rather than a rejection. */
+function unwrap(result: McpToolResult): McpToolResult {
+  const deny = (result as unknown as { deny?: unknown }).deny
+  if (typeof deny === 'string') throw new MeshError(`refusé : ${deny}`)
+  return result
+}
+
+/** The tool-name spelling of a server name (`Claude mesh` → `Claude_mesh`), which $.mcp.call accepts. */
+const spelling = (name: string) => name.replace(/[^A-Za-z0-9_-]/g, '_')
+
+/**
+ * Finds the mesh server among the tools the session has, without calling
+ * anything (a call may ask the person for permission): the server whose tools
+ * include get_coordination_status, the configured name first.
+ */
+async function findServer($: EngineInterface): Promise<string> {
+  const found = (await $.tool.list())
+    .map(tool => /^mcp__(.+)__get_coordination_status$/.exec(tool.name)?.[1])
+    .filter((name): name is string => name !== undefined)
+  const preferred = candidates.map(spelling).find(name => found.includes(name))
+  const name = preferred ?? found[0]
+  if (name === undefined) {
+    throw new MeshError(`serveur MCP mesh introuvable : aucun outil get_coordination_status (essayé : ${candidates.join(', ')})`)
   }
-  throw new MeshError(`serveur MCP mesh introuvable (essayé : ${candidates.join(', ')})`)
+  return name
+}
+
+/** Calls a coordinator tool through the engine's own MCP connection: one call, so at most one ask. */
+async function call<T = unknown>($: EngineInterface, tool: string, args: Record<string, unknown> = {}): Promise<T> {
+  server ??= await findServer($)
+  return parseResult(unwrap(await $.mcp.call(server, tool, args))) as T
 }
 
 async function registerArgs($: EngineInterface): Promise<Record<string, unknown>> {
@@ -124,7 +145,9 @@ async function poll($: EngineInterface): Promise<MeshSnapshot> {
   const prev = await read($, snapshotAtom)
   let next: MeshSnapshot
   try {
-    await call($, 'heartbeat_session', {}).catch(async () => {
+    await call($, 'heartbeat_session', {}).catch(async err => {
+      // Only a missing agent is fixed by registering; anything else (a refusal) stops here.
+      if (!/register_session|no agent registered/i.test(errorText(err))) throw err
       await call($, 'register_session', await registerArgs($))
     })
     const status = await call<RawStatus>($, 'get_coordination_status', {})
@@ -134,8 +157,16 @@ async function poll($: EngineInterface): Promise<MeshSnapshot> {
       limit: 50,
     })
     next = toSnapshot(status, inbox.messages ?? [], server, prev.quota, Date.now())
+    failures = 0
   } catch (err) {
-    next = { ...prev, error: errorText(err), updatedAt: Date.now() }
+    failures += 1
+    const isPaused = failures >= MAX_FAILURES
+    if (isPaused) {
+      pollTimer?.cancel()
+      pollTimer = null
+    }
+    const reason = isPaused ? 'en pause (/mesh pour reprendre) : ' : ''
+    next = { ...prev, error: `${reason}${errorText(err)}`, updatedAt: Date.now() }
   }
   // session.measure writes the quota meanwhile: keep the newest.
   const stored = await update($, snapshotAtom, current => ({ ...next, quota: current.quota }))
@@ -144,6 +175,13 @@ async function poll($: EngineInterface): Promise<MeshSnapshot> {
   await announce($, stored, prev).catch(() => {})
   drawStatus($, stored)
   return stored
+}
+
+/** (Re)starts the poll timer; a poll that keeps failing stops it again. */
+function startPolling($: EngineInterface) {
+  pollTimer?.cancel()
+  failures = 0
+  pollTimer = $.clock.every(opts.pollMs, () => void refresh($))
 }
 
 // ------------------------------------------------------- 3. lease keeping
@@ -468,7 +506,7 @@ export const register: Register = (on, options) => {
       }
       await refresh($)
     })().catch(() => {})
-    $.clock.every(opts.pollMs, () => void refresh($))
+    startPolling($)
     for (const command of COMMANDS) await $.command.register({ ...command })
     return next(e)
   })
@@ -538,6 +576,7 @@ export const register: Register = (on, options) => {
   // ------------------------------------------------------------ commands
 
   on('command.run', { command: 'mesh' }, async $ => {
+    if (pollTimer === null) startPolling($)
     const opened = await openPane($)
     return { text: opened.isPlaced ? 'Panneau Mesh ouvert.' : "Panneau Mesh demandé : il s'affichera dès que la place le permet." }
   })

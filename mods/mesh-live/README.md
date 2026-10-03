@@ -98,6 +98,24 @@ claude plugin validate mods/mesh-live
 claude plugin test mods/mesh-live
 ```
 
+### Demandes d'autorisation (sessions cloud / mobile)
+
+Chaque sondage appelle 3 outils mesh (`heartbeat_session`, `get_coordination_status`,
+`read_messages`). Là où chaque appel MCP demande une autorisation sans proposer
+« toujours autoriser » (claude.ai/code sur le web ou le mobile), cela fait une demande
+toutes les quelques secondes. Constaté en vrai : la règle
+`"permissions": { "allow": ["mcp__mesh", "mcp__Claude_mesh"] }` du `.claude/settings.json`
+ne les a pas supprimées dans cette session. Le mod limite donc les dégâts :
+
+- un appel = au plus une demande (le nom du serveur est lu dans la liste des outils,
+  sans appel d'essai) ;
+- refuser `heartbeat_session` ne déclenche plus de `register_session` ;
+- après 2 sondages en échec (refus compris), le sondage s'arrête et la ligne de statut
+  affiche `en pause (/mesh pour reprendre)`.
+
+Tant que ces autorisations ne peuvent pas être données une fois pour toutes, active
+plutôt `mesh-live` dans un terminal ou l'app desktop, où « toujours autoriser » existe.
+
 Limites connues : le réveil (`$.prompt.submit`) attend que la session soit
 inactive ; les mods sont une API en accès anticipé qui peut changer d'une version
 de Claude Code à l'autre (écrit et testé avec la 2.1.288).

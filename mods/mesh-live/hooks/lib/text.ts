@@ -43,5 +43,5 @@ export const WRITERS: Record<string, string> = {
   NotebookEdit: 'notebook_path',
 }
 
-/** Names the mesh server goes by: the manual MCP, the claude.ai connector, the plugin's own. */
+/** Names the mesh server goes by, preferred in this order when several are connected. */
 export const FALLBACK_SERVERS = ['mesh', 'Claude mesh', 'plugin:claude-agents-mesh:mesh']
