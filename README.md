@@ -153,7 +153,7 @@ automatiquement.
 | --- | --- |
 | Identité / admin | `whoami`, `create_workspace`, `invite_member`, `list_workspace_members`, `list_tokens`, `revoke_token` |
 | Présence | `register_session`, `heartbeat_session`, `list_agents`, `get_agent_status` |
-| Tâches | `create_task`, `list_tasks`, `claim_task`, `heartbeat_task`, `release_task`, `complete_task`, `update_task` |
+| Tâches | `create_task`, `list_tasks`, `claim_task`, `heartbeat_task`, `release_task`, `complete_task`, `update_task` (champ `files` : fichiers touchés) |
 | Messages | `send_message`, `read_messages`, `ack_message` |
 | Quotas / vue | `report_quota_event`, `get_quota_status`, `get_coordination_status` |
 
@@ -171,6 +171,28 @@ Un plugin ne peut pas imposer la statusline principale : ajoute-la toi-même dan
 Elle affiche `mesh | 5h 95% reset 19:00Z | 7d 82% reset 16:00Z`. Si `MESH_MCP_URL`
 et `MESH_MCP_TOKEN` sont exportés, elle émet aussi un `quota_warning` (une fois par
 fenêtre de 5 h au-delà de `MESH_WARN_AT`, défaut 90 %).
+
+---
+
+## 6. Mod `mesh-live` (optionnel, recommandé)
+
+[`mods/mesh-live`](mods/mesh-live/README.md) est un **mod** Claude Code (plugin de
+*function hooks* en TypeScript) publié dans la même marketplace. Il utilise le serveur
+MCP de `claude-agents-mesh` et ajoute, sans config supplémentaire :
+
+1. un bandeau de messages et un **réveil automatique** de l'agent sur nouveau message
+   ou nouvelle tâche ;
+2. des **quotas réels** (fenêtres 5 h / 7 j lues dans le moteur) → `report_quota_event` ;
+3. le **renouvellement automatique du bail** des tâches et leur libération en fin de session ;
+4. une **passation automatique** près de la limite (note rédigée, tâches libérées,
+   agents prévenus) ;
+5. un panneau **`/mesh`** ; 6. les commandes `/inbox`, `/claim`, `/handoff`, `/tell` ;
+7. une ligne de statut ; 8. l'état du mesh donné au modèle quand il change ;
+9. un **verrou de fichiers** entre agents (champ `files` des tâches) ;
+10. le masquage des tokens `mesh_…` à l'affichage.
+
+Active `mesh-live` à côté de `claude-agents-mesh`. Le verrou de fichiers demande la
+migration `20261003100000_task_files.sql` et le redéploiement de `coordinator`.
 
 ---
 
@@ -195,9 +217,10 @@ Révoquer un accès : `revoke_token(token_id)` (voir `list_tokens`).
 hooks/                         session-start, session-end, stop, quota-notification
 skills/coordination/SKILL.md   Guide de coordination pour Claude
 statusline/statusline.sh       Statusline quota (optionnelle)
+mods/mesh-live/                Mod Claude Code : le mesh en direct (voir son README)
 supabase/
   config.toml
-  migrations/                  base_schema + token_auth
+  migrations/                  base_schema + token_auth + task_files
   functions/coordinator/       Serveur MCP (Deno/TypeScript)
 docs/architecture.md
 ```
