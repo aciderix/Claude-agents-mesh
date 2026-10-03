@@ -3,6 +3,25 @@ import { Ctx, logEvent, MeshError, myAgentId, requireMember, Tool } from "../lib
 
 const TASK_STATUSES = ["pending", "claimed", "in_progress", "completed", "failed", "cancelled"];
 
+const FILES_SCHEMA = {
+  type: "array",
+  items: { type: "string" },
+  maxItems: 200,
+  description:
+    "Repo-relative paths this task edits: a file ('src/app.ts'), a directory ending in '/' ('src/ui/') or a glob ('src/**/*.test.ts'). Other agents are warned before editing them.",
+};
+
+/** Trim, drop empties and duplicates, strip a leading "./"; never more than 200 entries. */
+function normalizeFiles(files: unknown): string[] {
+  if (!Array.isArray(files)) return [];
+  const out = new Set<string>();
+  for (const f of files) {
+    const v = String(f ?? "").trim().replace(/^\.\//, "");
+    if (v) out.add(v);
+  }
+  return [...out].slice(0, 200);
+}
+
 async function rpcSingle(ctx: Ctx, fn: string, params: Record<string, unknown>) {
   const { data, error } = await ctx.supa.rpc(fn, params);
   if (error) throw new MeshError(`${fn} failed: ${error.message}`);
@@ -20,6 +39,7 @@ export const taskTools: Tool[] = [
         title: { type: "string" },
         description: { type: "string" },
         priority: { type: "integer", description: "Higher = more urgent. Default 0." },
+        files: FILES_SCHEMA,
       },
       required: ["title"],
       additionalProperties: false,
@@ -30,6 +50,7 @@ export const taskTools: Tool[] = [
       const { data, error } = await ctx.supa.from("tasks").insert({
         workspace_id: m.workspaceId, created_by_agent_id: myId, title: String(args.title),
         description: args.description ?? null, priority: Number(args.priority ?? 0), status: "pending",
+        files: normalizeFiles(args.files),
       }).select("*").single();
       if (error) throw new MeshError(error.message);
       await logEvent(ctx, m.workspaceId, myId, "task_created", { task_id: data.id, title: data.title });
@@ -154,7 +175,7 @@ export const taskTools: Tool[] = [
   {
     name: "update_task",
     description:
-      "Update a task's title, description, priority, or status (e.g. to 'cancelled' or 'failed'). Only the creator or current assignee may update it.",
+      "Update a task's title, description, priority, status (e.g. to 'cancelled' or 'failed') or the files it touches. Only the creator or current assignee may update it.",
     inputSchema: {
       type: "object",
       properties: {
@@ -163,6 +184,7 @@ export const taskTools: Tool[] = [
         description: { type: "string" },
         priority: { type: "integer" },
         status: { type: "string", enum: TASK_STATUSES },
+        files: FILES_SCHEMA,
       },
       required: ["task_id"],
       additionalProperties: false,
@@ -181,6 +203,7 @@ export const taskTools: Tool[] = [
       for (const k of ["title", "description", "priority", "status"]) {
         if (args[k] !== undefined) patch[k] = args[k];
       }
+      if (args.files !== undefined) patch.files = normalizeFiles(args.files);
       if (!Object.keys(patch).length) throw new MeshError("nothing to update");
       const { data, error } = await ctx.supa.from("tasks").update(patch).eq("id", task.id).select("*").single();
       if (error) throw new MeshError(error.message);

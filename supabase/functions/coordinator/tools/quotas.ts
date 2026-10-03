@@ -70,7 +70,7 @@ export const quotaTools: Tool[] = [
       const now = Date.now();
       const [agentsR, tasksR, quotaR, msgR] = await Promise.all([
         ctx.supa.from("agents").select("id, account_label, status, last_heartbeat_at, user_id").eq("workspace_id", m.workspaceId),
-        ctx.supa.from("tasks").select("id, title, status, priority, assigned_to_agent_id, lease_until, created_at")
+        ctx.supa.from("tasks").select("id, title, status, priority, assigned_to_agent_id, created_by_agent_id, files, lease_until, created_at")
           .eq("workspace_id", m.workspaceId).in("status", ["pending", "claimed", "in_progress"])
           .order("priority", { ascending: false }).limit(100),
         ctx.supa.from("quota_events").select("agent_id, event_type, quota_window, resets_at, created_at")

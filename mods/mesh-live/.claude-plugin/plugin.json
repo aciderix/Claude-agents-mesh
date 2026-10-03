@@ -1,0 +1,108 @@
+{
+  "name": "mesh-live",
+  "version": "0.1.0",
+  "description": "Live Claude Agents Mesh inside Claude Code: inbox that wakes the agent, real quota reports, automatic task leases and handoff, a /mesh pane, commands, status line, live context, file locks and token masking.",
+  "author": { "name": "aciderix" },
+  "homepage": "https://github.com/aciderix/claude-agents-mesh",
+  "repository": "https://github.com/aciderix/claude-agents-mesh",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "mesh_server": {
+      "type": "string",
+      "title": "Mesh MCP server name",
+      "description": "The mesh MCP server's name as /mcp lists it. If it is not found, 'mesh', 'Claude mesh' and 'plugin:claude-agents-mesh:mesh' are tried.",
+      "default": "mesh"
+    },
+    "agent_name": {
+      "type": "string",
+      "title": "Agent name",
+      "description": "Display name used with register_session. Empty keeps the name already registered.",
+      "default": ""
+    },
+    "poll_seconds": {
+      "type": "number",
+      "title": "Poll interval (seconds)",
+      "description": "How often the mesh is polled (presence, tasks, messages). Minimum 10.",
+      "default": 30
+    },
+    "wake_on_message": {
+      "type": "boolean",
+      "title": "Wake on new message",
+      "description": "Start a turn when a new mesh message arrives while the session is idle.",
+      "default": true
+    },
+    "wake_on_task": {
+      "type": "boolean",
+      "title": "Wake on new task",
+      "description": "Start a turn when a new pending task appears and this agent holds none.",
+      "default": true
+    },
+    "show_band": {
+      "type": "boolean",
+      "title": "Inbox band",
+      "description": "Show unread messages and free tasks in a band above the prompt.",
+      "default": true
+    },
+    "show_status": {
+      "type": "boolean",
+      "title": "Status line",
+      "description": "Show agents, tasks, messages and quota in the status line.",
+      "default": true
+    },
+    "report_quota": {
+      "type": "boolean",
+      "title": "Report quota",
+      "description": "Report the real rate-limit windows to the mesh (warning, blocked, reset).",
+      "default": true
+    },
+    "quota_thresholds": {
+      "type": "string",
+      "title": "Quota warning thresholds",
+      "description": "Comma-separated percentages at which a quota_warning is reported once per window.",
+      "default": "80,90,95"
+    },
+    "auto_handoff": {
+      "type": "boolean",
+      "title": "Automatic handoff",
+      "description": "Near the quota limit, write a handoff note, release the tasks held and tell the other agents.",
+      "default": true
+    },
+    "handoff_threshold": {
+      "type": "number",
+      "title": "Handoff threshold (%)",
+      "description": "Rate-limit percentage that triggers the automatic handoff.",
+      "default": 95
+    },
+    "keep_leases": {
+      "type": "boolean",
+      "title": "Keep task leases",
+      "description": "Renew the lease of every task this agent holds on each poll.",
+      "default": true
+    },
+    "release_on_exit": {
+      "type": "boolean",
+      "title": "Release tasks on exit",
+      "description": "Release the tasks held and go offline when the session ends.",
+      "default": true
+    },
+    "inject_context": {
+      "type": "boolean",
+      "title": "Live mesh context",
+      "description": "Give the model the mesh state with each prompt, whenever it changed.",
+      "default": true
+    },
+    "file_lock": {
+      "type": "string",
+      "title": "File locks",
+      "description": "What happens before editing a file another agent's task declares: warn, deny or off.",
+      "options": ["warn", "deny", "off"],
+      "default": "warn"
+    },
+    "mask_tokens": {
+      "type": "boolean",
+      "title": "Mask mesh tokens",
+      "description": "Mask mesh_ tokens wherever the transcript draws them.",
+      "default": true
+    }
+  }
+}

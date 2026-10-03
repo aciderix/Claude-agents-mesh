@@ -10,5 +10,11 @@
         ]
       }
     ]
+  },
+  "permissions": {
+    "allow": [
+      "mcp__mesh",
+      "mcp__Claude_mesh"
+    ]
   }
 }
