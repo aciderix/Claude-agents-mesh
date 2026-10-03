@@ -185,7 +185,8 @@ export function digest(s: MeshSnapshot): string {
   const files = (list: string[]) => (list.length > 0 ? ` — fichiers : ${list.join(', ')}` : '')
   const lines = [
     '<mesh-status>',
-    `Moi : ${me?.label ?? '?'} (${me?.status ?? 'non enregistré'})`,
+    // My own working/available flips every turn: only a status that matters is shown.
+    `Moi : ${me?.label ?? '?'}${me === undefined ? ' (non enregistré)' : isBlockedStatus(me.status) ? ` (${me.status})` : ''}`,
     `Autres agents : ${others.length === 0 ? 'aucun' : others.map(a => `${a.label} (${a.online ? a.status : 'hors ligne'})`).join(', ')}`,
   ]
   if (held.length > 0) lines.push('Mes tâches :', ...held.slice(0, LIMIT).map(t => `- ${t.title} [${t.id}] ${t.status}${files(t.files)}`))

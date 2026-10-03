@@ -153,7 +153,7 @@ describe('pure helpers', () => {
     const s = toSnapshot(STATUS, MESSAGES, 'mesh', [{ kind: 'five_hour', percentUsed: 87.4, resetsAt: null }], 1)
     expect(statusText(s)).toBe('mesh · 2/2 en ligne · 1 libre · ✉ 1 · 5h 87 %')
     const text = digest(s)
-    expect(text).toContain('Moi : Claude-A (available)')
+    expect(text).toContain('Moi : Claude-A\n')
     expect(text).toContain('- Écrire les tests [task-free] priorité 1')
     expect(text).toContain('- Refonte UI — Claude-B — fichiers : src/ui/, README.md')
     expect(text).toContain('Messages non lus : 1 (de Claude-B)')
