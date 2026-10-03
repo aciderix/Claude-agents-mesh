@@ -113,8 +113,10 @@ ne les a pas supprimées dans cette session. Le mod limite donc les dégâts :
 - après 2 sondages en échec (refus compris), le sondage s'arrête et la ligne de statut
   affiche `en pause (/mesh pour reprendre)`.
 
-Tant que ces autorisations ne peuvent pas être données une fois pour toutes, active
-plutôt `mesh-live` dans un terminal ou l'app desktop, où « toujours autoriser » existe.
+**Solution vérifiée : le mode de permissions « Auto »** (sélecteur en bas de l'écran sur
+claude.ai/code). Les appels du mod passent alors sans aucune demande. Attention, ce mode
+approuve aussi les autres actions de Claude dans la session. Dans un terminal ou l'app
+desktop, « toujours autoriser » suffit.
 
 Limites connues : le réveil (`$.prompt.submit`) attend que la session soit
 inactive ; les mods sont une API en accès anticipé qui peut changer d'une version
